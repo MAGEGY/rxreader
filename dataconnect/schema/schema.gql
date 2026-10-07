@@ -1,0 +1,47 @@
+type User @table {
+  displayName: String!
+  createdAt: Timestamp!
+  email: String
+  photoUrl: String
+}
+
+type Task @table {
+  user: User!
+  title: String!
+  createdAt: Timestamp!
+  isCompleted: Boolean!
+  description: String
+  dueDate: Date
+  dueTime: String
+  completedAt: Timestamp
+}
+
+type Tag @table {
+  user: User!
+  name: String!
+  createdAt: Timestamp!
+}
+
+type TaskTag @table(key: ["task", "tag"]) {
+  task: Task!
+  tag: Tag!
+  createdAt: Timestamp!
+}
+
+type Reminder @table {
+  task: Task!
+  reminderTime: Timestamp!
+  createdAt: Timestamp!
+  sent: Boolean!
+  message: String
+}
+
+type RecurrencePattern @table {
+  task: Task!
+  frequency: String!
+  createdAt: Timestamp!
+  interval: Int
+  dayOfWeek: Int
+  dayOfMonth: Int
+  monthOfYear: Int
+}

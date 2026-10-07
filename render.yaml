@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: rxreader
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Genkit/Gemini AI key - set this in the Render dashboard after first deploy
+      - key: GOOGLE_API_KEY
+        sync: false

@@ -1,0 +1,133 @@
+/**
+ * This ruleset enforces a strict user-ownership model for a medical prescription
+ * scanning application. The core philosophy is that all user-generated data,
+ * including their profile, scan history, and medication results, is private and
+ * can only be accessed by the user who created it.
+ *
+ * Data Structure:
+ * All data is hierarchically organized under the /users/{userId} path. This
+ * structure creates a clear ownership tree where scan histories and medication
+ * results are nested as subcollections within their owner's user document.
+ * - /users/{userId}
+ * - /users/{userId}/scanHistories/{scanHistoryId}
+ * - /users/{userId}/scanHistories/{scanHistoryId}/medicationResults/{medicationResultId}
+ *
+ * Key Security Decisions:
+ * - Default Deny: All paths are closed by default. Access is only granted explicitly.
+ * - Path-Based Security: Authorization is primarily determined by matching the
+ *   authenticated user's UID (`request.auth.uid`) with the `{userId}` wildcard
+ *   in the document path. This is a highly performant and secure pattern.
+ * - No User Listing: Users are strictly forbidden from listing documents in the
+ *   top-level `/users` collection to protect user privacy and prevent enumeration attacks.
+ * - Relational Integrity: On document creation, rules validate that key identifiers
+ *   (like `userId`) are correctly set in the document data to match the path,
+ *   enforcing data consistency. These identifiers are immutable on update.
+ * - Prototyping Flexibility: Data shape and type validation are intentionally omitted
+ *   to allow for rapid frontend development, while authorization rules remain strict.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --------------------------------------------------------------------
+    // Helper Functions
+    // --------------------------------------------------------------------
+
+    /**
+     * Checks if a user is authenticated.
+     */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /**
+     * Checks if the currently authenticated user's UID matches the given userId.
+     * This is the primary function for enforcing data ownership.
+     */
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    /**
+     * Checks for ownership on an existing document. Used for update and delete
+     * operations to prevent acting on non-existent data.
+     */
+    function isExistingOwner(userId) {
+      return isOwner(userId) && resource != null;
+    }
+
+    /**
+     * Validates required relational fields when a new User document is created.
+     * Ensures the document's internal ID matches its path ID.
+     */
+    function isNewUserDataValid(userId) {
+      return request.resource.data.id == userId;
+    }
+
+    /**
+     * Validates required relational fields for a new ScanHistory document.
+     * Ensures the document is correctly linked to the user in its path.
+     */
+    function isNewScanHistoryDataValid(userId) {
+      return request.resource.data.userId == userId;
+    }
+
+    /**
+     * Validates required relational fields for a new MedicationResult document.
+     * Ensures the document is correctly linked to its parent scan history.
+     */
+    function isNewMedicationResultDataValid(scanHistoryId) {
+      return request.resource.data.scanHistoryId == scanHistoryId;
+    }
+
+
+    // --------------------------------------------------------------------
+    // Collection Rules
+    // --------------------------------------------------------------------
+
+    /**
+     * @description Manages user profile documents.
+     * @path /users/{userId}
+     * @allow A user (uid: 'user123') creates their own profile at /users/user123. (create)
+     * @deny A user (uid: 'user456') attempts to read another user's profile at /users/user123. (get)
+     * @principle Restricts access to a user's own data tree and prevents user enumeration.
+     */
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && isNewUserDataValid(userId);
+      allow update: if isExistingOwner(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isExistingOwner(userId);
+
+      /**
+       * @description Stores the scan history for a specific user.
+       * @path /users/{userId}/scanHistories/{scanHistoryId}
+       * @allow A user (uid: 'user123') lists their own scans at /users/user123/scanHistories. (list)
+       * @deny An attacker (uid: 'user456') tries to create a scan history for another user at /users/user123/scanHistories. (create)
+       * @principle Enforces strict ownership for all user-generated content via path-based security.
+       */
+      match /scanHistories/{scanHistoryId} {
+        allow get: if isOwner(userId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isNewScanHistoryDataValid(userId);
+        allow update: if isExistingOwner(userId) && request.resource.data.userId == resource.data.userId;
+        allow delete: if isExistingOwner(userId);
+
+        /**
+         * @description Stores the medication results extracted from a specific scan.
+         * @path /users/{userId}/scanHistories/{scanHistoryId}/medicationResults/{medicationResultId}
+         * @allow A user (uid: 'user123') reads the results for their own scan. (get)
+         * @deny An anonymous user tries to delete a medication result document. (delete)
+         * @principle Inherits ownership from the parent path, ensuring data remains private to the user.
+         */
+        match /medicationResults/{medicationResultId} {
+          allow get: if isOwner(userId);
+          allow list: if isOwner(userId);
+          allow create: if isOwner(userId) && isNewMedicationResultDataValid(scanHistoryId);
+          allow update: if isExistingOwner(userId) && request.resource.data.scanHistoryId == resource.data.scanHistoryId;
+          allow delete: if isExistingOwner(userId);
+        }
+      }
+    }
+  }
+}
